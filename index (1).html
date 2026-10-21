@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>ForgeEstimate Ultra Pro — AI Blueprint Analysis</title>
+  <meta name="description" content="AI-Powered Construction Blueprint Estimation"/>
+  <meta name="theme-color" content="#10b981"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="ForgeEstimate"/>
+  <link rel="manifest" href="/manifest.json"/>
+  <link rel="apple-touch-icon" href="/icons/icon-192.png"/>
+  <link rel="icon" href="/icons/icon-192.png"/>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#091510;color:#fff;min-height:100vh}
+    #splash{position:fixed;top:0;right:0;bottom:0;left:0;z-index:9999;background:linear-gradient(135deg,#0a1a12,#091510);display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.5s}
+    #splash.fade{opacity:0;pointer-events:none}
+    .dot{width:8px;height:8px;border-radius:50%;background:#10b981;margin:0 3px;animation:blink 1.2s infinite}
+    .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+    @keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
+  </style>
+</head>
+<body>
+  <div id="splash">
+    <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#10b981,#059669);display:flex;align-items:center;justify-content:center;box-shadow:0 0 28px rgba(16,185,129,0.5)">
+      <span style="color:#000;font-weight:900;font-size:20px;font-family:sans-serif;letter-spacing:.05em">FE</span>
+    </div>
+    <h1 style="font-family:sans-serif;font-size:2rem;font-weight:900;letter-spacing:.06em;color:#fff;margin:14px 0 4px">FORGE<span style="color:#10b981">ESTIMATE</span></h1>
+    <p style="color:rgba(16,185,129,0.5);font-size:10px;letter-spacing:.25em;text-transform:uppercase;font-family:sans-serif">Ultra Pro v10 · AI Engine</p>
+    <div style="display:flex;margin-top:20px"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+  </div>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+  <script>
+    // ES5 only on purpose: old Chrome (<49) rejects const/let/arrow functions in plain scripts.
+    // Service worker disabled: remove any previously installed worker + caches for returning visitors
+    // (to re-enable later, restore: navigator.serviceWorker.register('/sw.js'))
+    try {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistrations) {
+        navigator.serviceWorker.getRegistrations().then(function (rs) {
+          rs.forEach(function (r) { r.unregister(); });
+        });
+      }
+      if (window.caches && caches.keys) {
+        caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
+      }
+    } catch (e) {}
+    function hideSplash() {
+      var s = document.getElementById('splash');
+      if (s) { s.className = 'fade'; setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 600); }
+    }
+    window.addEventListener('DOMContentLoaded', function () { setTimeout(hideSplash, 1400); });
+    // Safety net: never leave the splash up forever if the app fails to start
+    setTimeout(hideSplash, 8000);
+  </script>
+</body>
+</html>
