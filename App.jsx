@@ -32,7 +32,7 @@ function openLemonSqueezy(variantId, email, customData={}) {
 }
 
 // ─── STRIPE CHECKOUT (via your backend) ──────────────────────────
-async // ── HELIO PAYMENT ────────────────────────────────────────────────────────────
+// ── HELIO PAYMENT ────────────────────────────────────────────────────────────
 // Helio: crypto subscriptions + card payments — FULLY AUTOMATIC activation
 // Create pay links at app.hel.io then paste the IDs below
 const HELIO_CONFIG = {
