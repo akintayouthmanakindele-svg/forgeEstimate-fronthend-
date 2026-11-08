@@ -1,103 +1,38 @@
-import  React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { AlertTriangle, ArrowLeftRight, ArrowUpRight, Building2, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Clock, Cloud, Copy, Cpu, CreditCard, Database, Download, ExternalLink, Eye, EyeOff, FileSpreadsheet, FileText, Filter, Globe, HardDrive, Info, Landmark, LayoutDashboard, Lock, LogOut, Mail, Minus, Package, Plus, RefreshCw, RotateCcw, Send, Settings, ShieldAlert, ShoppingCart, Sliders, Star, TrendingUp, Upload, User, Wifi, WifiOff, Wrench, X, Zap } from "lucide-react";
 
 const FONT = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Bebas+Neue&family=JetBrains+Mono:wght@400;600;700&display=swap";
 
+const SUPPORT_EMAIL = "aethelgroupltd@gmail.com";
 
-// ─── LEMON SQUEEZY CHECKOUT (UK-friendly, Stripe-powered) ─────────
-// Works with UK banks that block Paystack
-// User must set their Lemon Squeezy store slug + variant IDs in dashboard
-const LEMON_SQUEEZY_CONFIG = {
-  store_slug: "YOUR_STORE_SLUG", // paste your Lemon Squeezy store slug here
-  variants: {
-    // Paste your variant IDs from Lemon Squeezy dashboard
-    starter_monthly:    "LS_STARTER_MONTHLY_ID",
-    starter_annual:     "LS_STARTER_ANNUAL_ID",
-    pro_monthly:        "LS_PRO_MONTHLY_ID",
-    pro_annual:         "LS_PRO_ANNUAL_ID",
-    enterprise_monthly: "LS_ENTERPRISE_MONTHLY_ID",
-    enterprise_annual:  "LS_ENTERPRISE_ANNUAL_ID",
-  }
-};
-
-function openLemonSqueezy(variantId, email, customData={}) {
-  const params = new URLSearchParams({
-    "checkout[email]": email,
-    "checkout[custom][user_email]": email,
-    "checkout[custom][plan]": customData.plan||"monthly",
-    "checkout[custom][app]": "forgeestimate",
-  });
-  const url = `https://${LEMON_SQUEEZY_CONFIG.store_slug}.lemonsqueezy.com/checkout/buy/${variantId}?${params}`;
-  window.open(url, "_blank", "width=600,height=700,scrollbars=yes");
-}
-
-// ─── STRIPE CHECKOUT (via your backend) ──────────────────────────
-// ── HELIO PAYMENT ────────────────────────────────────────────────────────────
-// Helio: crypto subscriptions + card payments — FULLY AUTOMATIC activation
-// Create pay links at app.hel.io then paste the IDs below
-const HELIO_CONFIG = {
-  // Paste your Helio pay link IDs from app.hel.io dashboard
-  // Format: "xxxxxxxxxxxxxxxxxxxxxxxx" (24-char hex)
-  paylinkIds: {
-    starter_monthly:    process?.env?.HELIO_STARTER_MONTHLY_ID    || "HELIO_STARTER_MONTHLY_ID",
-    starter_annual:     process?.env?.HELIO_STARTER_ANNUAL_ID     || "HELIO_STARTER_ANNUAL_ID",
-    pro_monthly:        process?.env?.HELIO_PRO_MONTHLY_ID        || "HELIO_PRO_MONTHLY_ID",
-    pro_annual:         process?.env?.HELIO_PRO_ANNUAL_ID         || "HELIO_PRO_ANNUAL_ID",
-    enterprise_monthly: process?.env?.HELIO_ENTERPRISE_MONTHLY_ID || "HELIO_ENTERPRISE_MONTHLY_ID",
-    enterprise_annual:  process?.env?.HELIO_ENTERPRISE_ANNUAL_ID  || "HELIO_ENTERPRISE_ANNUAL_ID",
-  },
-  // Your Helio API public key from dashboard
-  publicKey: "YOUR_HELIO_PUBLIC_KEY",
-};
-
-function openHelioCheckout(plan, billingCycle, email, onSuccess){
-  const key = `${plan}_${billingCycle}`;
-  const paylinkId = HELIO_CONFIG.paylinkIds[key];
-
-  if(!paylinkId || paylinkId.includes("HELIO_")){
-    alert("Helio payment not configured yet.\n\nTo set up:\n1. Go to app.hel.io\n2. Create a pay link for "+plan+" ("+billingCycle+")\n3. Paste the ID into HELIO_CONFIG in App.jsx\n\nUsing manual USDT as fallback.");
+// ─── FLUTTERWAVE CHECKOUT ─────────────────────────────────────────
+function openFlutterwaveCheckout(plan, billingCycle, email, amount, onSuccess) {
+  if (!window.FlutterwaveCheckout) {
+    const script = document.createElement("script");
+    script.src = "https://checkout.flutterwave.com/v3.js";
+    script.onload = () => openFlutterwaveCheckout(plan, billingCycle, email, amount, onSuccess);
+    document.head.appendChild(script);
     return;
   }
-
-  // Open Helio checkout — supports USDC, USDT, SOL, card
-  // Helio auto-fires webhook on payment → activates account
-  const helioUrl = `https://app.hel.io/pay/${paylinkId}?email=${encodeURIComponent(email||"")}`;
-  const popup = window.open(helioUrl, "HelioCheckout", "width=480,height=700,top=100,left=200");
-
-  if(!popup){
-    // Popup blocked — redirect instead
-    window.location.href = helioUrl;
-    return;
-  }
-
-  // Poll for popup close — then check if user is now active
-  const poll = setInterval(()=>{
-    try{
-      if(popup.closed){
-        clearInterval(poll);
-        // Wait 3 seconds for webhook to process then check
-        setTimeout(()=>{
-          onSuccess && onSuccess(plan);
-          alert("Payment submitted! If your account is not activated within 5 minutes, please contact support via WhatsApp.");
-        }, 3000);
+  window.FlutterwaveCheckout({
+    public_key: "YOUR_FLUTTERWAVE_PUBLIC_KEY",
+    tx_ref: "forge_" + Date.now(),
+    amount: amount,
+    currency: "USD",
+    payment_options: "card, banktransfer, ussd",
+    customer: { email: email },
+    customizations: {
+      title: "ForgeEstimate Ultra Pro",
+      description: plan + " plan - " + billingCycle,
+      logo: "/icons/icon-192.png",
+    },
+    callback: (response) => {
+      if (response.status === "successful") {
+        onSuccess && onSuccess(plan);
       }
-    }catch{clearInterval(poll);}
-  }, 1000);
-}
-
-async function openStripeCheckout(plan, email, backendUrl="https://your-backend.railway.app") {
-  try {
-    const r = await fetch(`${backendUrl}/api/stripe/create-checkout`, {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({plan, email})
-    });
-    const { url } = await r.json();
-    if(url) window.open(url,"_blank");
-    else alert("Stripe checkout failed. Try Paystack or Lemon Squeezy.");
-  } catch(e) {
-    alert("Could not connect to payment server. Try another payment method.");
-  }
+    },
+    onclose: () => {},
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
