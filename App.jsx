@@ -5,8 +5,51 @@ const FONT = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;50
 
 const SUPPORT_EMAIL = "aethelgroupltd@gmail.com";
 
+// ─── MISSING CONSTANTS (required for app to render) ───────────────
+const TRADES = {
+  GENERAL:    { id:"GENERAL",    label:"General Contractor", icon: Building2, color:"#10b981", desc:"Full multi-trade survey" },
+  ELECTRICAL: { id:"ELECTRICAL", label:"Electrical",         icon: Zap,       color:"#f59e0b", desc:"Panels, wire, outlets, lighting" },
+  PLUMBING:   { id:"PLUMBING",   label:"Plumbing",           icon: Wrench,    color:"#3b82f6", desc:"Supply, drain, fixtures" },
+  ROOFING:    { id:"ROOFING",    label:"Roofing",            icon: Building2, color:"#ef4444", desc:"Squares, pitch, penetrations" },
+  HVAC:       { id:"HVAC",       label:"HVAC",               icon: Cpu,       color:"#06b6d4", desc:"Ducts, tonnage, registers" },
+  CIVIL:      { id:"CIVIL",      label:"Civil / Site",       icon: Landmark,  color:"#8b5cf6", desc:"Earthworks, paving, drainage" },
+};
+
+const DEFAULT_WASTE = {
+  Concrete:5, Steel:7, Masonry:10, Lumber:10, Drywall:12,
+  Electrical:3, Plumbing:5, Roofing:8, HVAC:3, Finishes:10, General:5,
+};
+
+const ALLOWED_MIME = [
+  "application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp",
+];
+
+const LOAD_STEPS = [
+  "Parsing blueprint…",
+  "Extracting rooms & dimensions…",
+  "Running quantity takeoff…",
+  "Pricing materials…",
+  "Cross-checking with AI…",
+  "Building cost matrix…",
+];
+
+const REBAR_SIZES = {
+  '#3 (3/8")': { weight_lb_ft: 0.376, dia_in: 0.375 },
+  '#4 (1/2")': { weight_lb_ft: 0.668, dia_in: 0.5   },
+  '#5 (5/8")': { weight_lb_ft: 1.043, dia_in: 0.625 },
+  '#6 (3/4")': { weight_lb_ft: 1.502, dia_in: 0.75  },
+  '#8 (1")':   { weight_lb_ft: 2.670, dia_in: 1.0   },
+};
+
+const TRIAL_HOURS = 24;
+
 // ─── FLUTTERWAVE CHECKOUT ─────────────────────────────────────────
 function openFlutterwaveCheckout(plan, billingCycle, email, amount, onSuccess) {
+  const flwKey = import.meta.env.VITE_FLW_PUBLIC_KEY || "";
+  if (!flwKey) {
+    alert("Flutterwave payment is not configured yet. Please use Paystack or USDT Manual, or contact support at " + SUPPORT_EMAIL);
+    return;
+  }
   if (!window.FlutterwaveCheckout) {
     const script = document.createElement("script");
     script.src = "https://checkout.flutterwave.com/v3.js";
@@ -15,7 +58,7 @@ function openFlutterwaveCheckout(plan, billingCycle, email, amount, onSuccess) {
     return;
   }
   window.FlutterwaveCheckout({
-    public_key: "YOUR_FLUTTERWAVE_PUBLIC_KEY",
+    public_key: flwKey,
     tx_ref: "forge_" + Date.now(),
     amount: amount,
     currency: "USD",
@@ -34,6 +77,8 @@ function openFlutterwaveCheckout(plan, billingCycle, email, amount, onSuccess) {
     onclose: () => {},
   });
 }
+
+// All payments route through openFlutterwaveCheckout or Paystack only.
 
 // ═══════════════════════════════════════════════════════════════
 // PDF REPORT GENERATOR
@@ -307,7 +352,7 @@ function GlobalBackground(){
 
 function validateFile(f,plan="starter"){
   if(!ALLOWED_MIME.includes(f.type)) return{valid:false,error:"Invalid format. Use PDF, PNG, JPEG, or WebP."};
-  const limits={starter:150,pro:300,enterprise:1024};
+  const limits=Object.fromEntries(Object.entries(PLANS).map(([k,v])=>[k,v.fileLimitMB||150]));
   const limitMB=limits[plan]||150;
   const limitBytes=limitMB*1024*1024;
   if(f.size>limitBytes) return{valid:false,error:`File is ${(f.size/1024/1024).toFixed(0)}MB — exceeds your ${PLANS[plan]?.label||"Starter"} plan limit of ${limitMB}MB. Upgrade to ${plan==="starter"?"Pro (300MB)":"Enterprise (1GB)"} for larger files.`};
@@ -317,18 +362,24 @@ function validateFile(f,plan="starter"){
 // ═══════════════════════════════════════════════════════════════
 // FORGEDB v7
 // ═══════════════════════════════════════════════════════════════
-const DB_NAME="ForgeEstimateUltraProDB",DB_VER=7;
-function openDB(){return new Promise((res,rej)=>{const req=indexedDB.open(DB_NAME,DB_VER);req.onerror=()=>rej(req.error);req.onsuccess=()=>res(req.result);req.onupgradeneeded=(e)=>{const db=e.target.result;[["queryHistory",{keyPath:"id",autoIncrement:true}],["projectSnapshots",{keyPath:"projectId"}],["userLicenses",{keyPath:"featureKey"}],["compareHistory",{keyPath:"compareId"}]].forEach(([n,o])=>{if(!db.objectStoreNames.contains(n))db.createObjectStore(n,o);});};});}
+const DB_NAME="ForgeEstimateUltraProDB",DB_VER=8;
+function openDB(){return new Promise((res,rej)=>{const req=indexedDB.open(DB_NAME,DB_VER);req.onerror=()=>rej(req.error);req.onsuccess=()=>res(req.result);req.onupgradeneeded=(e)=>{const db=e.target.result;[["queryHistory",{keyPath:"id",autoIncrement:true}],["projectSnapshots",{keyPath:"projectId"}],["userLicenses",{keyPath:"featureKey"}],["compareHistory",{keyPath:"compareId"}],["usedTxHashes",{keyPath:"hash"}],["clientApprovals",{keyPath:"id",autoIncrement:true}]].forEach(([n,o])=>{if(!db.objectStoreNames.contains(n))db.createObjectStore(n,o);});};});}
 const dbRun=(s,m,fn)=>openDB().then(db=>new Promise((res,rej)=>{const r=fn(db.transaction(s,m).objectStore(s));r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}));
 const dbAdd=(s,d)=>openDB().then(db=>new Promise((res,rej)=>{const r=db.transaction(s,"readwrite").objectStore(s).add({...d,timestamp:new Date().toISOString()});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}));
 const dbPut=(s,d)=>dbRun(s,"readwrite",st=>st.put(d));
 const dbDel=(s,k)=>dbRun(s,"readwrite",st=>st.delete(k));
 const dbOne=(s,k)=>dbRun(s,"readonly",st=>st.get(k));
+const dbGet=dbOne; // alias used by CryptoPaymentFlow
 const dbAll=(s)=>openDB().then(db=>new Promise((res,rej)=>{const r=db.transaction(s,"readonly").objectStore(s).getAll();r.onsuccess=()=>res([...r.result].sort((a,b)=>new Date(b.timestamp||b.savedAt||0)-new Date(a.timestamp||a.savedAt||0)));r.onerror=()=>rej(r.error);}));
-const BSTORES=["queryHistory","projectSnapshots","userLicenses","compareHistory"];
+const BSTORES=["queryHistory","projectSnapshots","userLicenses","compareHistory","usedTxHashes","clientApprovals"];
 
-async function saveLicense(k,m){await dbPut("userLicenses",{featureKey:k,isUnlocked:true,reference:m.reference||"DEMO_"+Date.now(),activatedAt:new Date().toISOString(),customer:m.customerEmail||"",tier:m.tier||"ENTERPRISE_MONTHLY"});}
-async function checkSubscriptionValidity(fk){try{const r=await dbOne("userLicenses",fk);if(!r||!r.isUnlocked)return{isValid:false,daysRemaining:0};const d=Math.floor((Date.now()-new Date(r.activatedAt))/864e5);const rem=Math.max(0,30-d);return{isValid:rem>0,daysRemaining:rem,customer:r.customer};}catch{return{isValid:false,daysRemaining:0};}}
+async function saveLicense(k,m){
+  const billing=m.billing||"monthly";
+  const durationDays=billing==="annual"?365:30;
+  const expiry=new Date(Date.now()+durationDays*864e5).toISOString();
+  await dbPut("userLicenses",{featureKey:k,isUnlocked:true,reference:m.reference||"DEMO_"+Date.now(),activatedAt:new Date().toISOString(),subscription_expiry:expiry,customer:m.customerEmail||"",tier:m.tier||"ENTERPRISE_MONTHLY",plan:m.plan||"enterprise",billing});
+}
+async function checkSubscriptionValidity(fk){try{const r=await dbOne("userLicenses",fk);if(!r||!r.isUnlocked)return{isValid:false,daysRemaining:0};const d=Math.floor((Date.now()-new Date(r.activatedAt))/864e5);const durationDays=(r.billing==="annual")?365:30;const rem=Math.max(0,durationDays-d);return{isValid:rem>0,daysRemaining:rem,customer:r.customer,plan:r.plan||"enterprise"};}catch{return{isValid:false,daysRemaining:0};}}
 async function debugForceBackdateLicense(k,d){const r=await dbOne("userLicenses",k);if(!r)return;await dbPut("userLicenses",{...r,activatedAt:new Date(Date.now()-d*864e5).toISOString()});}
 async function debugForceRevokeLicense(k){try{await dbDel("userLicenses",k);}catch{}}
 async function saveMongoConfig(apiKey,appId){await dbPut("userLicenses",{featureKey:"MONGO_CONFIG",apiKey,appId,savedAt:new Date().toISOString()});}
@@ -386,7 +437,9 @@ function fileToB64WithProgress(file,onProg){
 }
 function buildMediaBlock(b64,mt){
   if(mt==="application/pdf"){
-    return {type:"text",text:"[PDF Blueprint — analyze as construction document. Extract all rooms, dimensions, materials, MEP systems, and structural elements. Return full JSON schema.]"};
+    // Send PDF as a base64 document block (Claude/Anthropic format via Netlify function)
+    // Groq does not support PDFs natively — callGroq will fall back to Netlify Claude function
+    return {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}};
   }
   const nm=mt==="image/jpg"?"image/jpeg":mt;
   // Use image_url format — compatible with both Groq and Gemini via callGroq converter
@@ -409,7 +462,7 @@ const GEMINI_MODEL = "gemini-1.5-flash";
 // Railway handles heavy load, Netlify is the safety net
 // Paste your Railway URL after deployment
 // ═══════════════════════════════════════════════════════════════
-const RAILWAY_URL = "https://forgeestimateultrapro.onrender.com"; // ← paste your Railway URL e.g. https://forgeestimate.up.railway.app
+const RAILWAY_URL = "https://forgeestimateultrapro.onrender.com"; // Backend on Render — update this if you migrate to Railway or another host
 const API_BASE    = RAILWAY_URL || ""; // empty = use Netlify functions (relative /api/...)
 
 function apiUrl(path){
@@ -417,11 +470,14 @@ function apiUrl(path){
 }
 
 // ── ADMIN CONFIGURATION ──────────────────────────────────────
-const ADMIN_EMAIL    = "akintayouthmanakindele@gmail.com";
-const ADMIN_PASSWORD = "ForgeAdmin2026!Ultra"; // Change this after first login
+// Admin credentials are checked server-side only — never store them here
+// ADMIN_EMAIL removed — use SUPPORT_EMAIL directly
+const ADMIN_PASSWORD = ""; // AdminPanel is a debug panel, not a user-facing feature
 
 // ── ENGINE 2: GROQ ────────────────────────────────────────────
-const GROQ_KEY          = "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";
+// IMPORTANT: Revoke the old key at console.groq.com and paste a NEW one below
+// Or set VITE_GROQ_KEY in Netlify env vars and redeploy
+const GROQ_KEY          = import.meta.env.VITE_GROQ_KEY || "";
 const GROQ_VISION_MODEL = "llama-3.2-90b-vision-preview";
 const GROQ_TEXT_MODEL   = "llama-3.3-70b-versatile";
 
@@ -459,7 +515,7 @@ async function incrementDailyScan(){
 }
 
 async function checkDailyScanLimit(userPlan="starter"){
-  if(userPlan==="enterprise") return {allowed:true, used:0, limit:Infinity};
+  if(userPlan==="enterprise") return {allowed:true, used:0, limit:"Unlimited"};
   const planLimit = PLANS[userPlan]?.dailyScans || 10;
   const {count}   = await getDailyScansUsed();
   if(count >= planLimit){
@@ -499,6 +555,7 @@ async function callViaFugu(msgs, max){
 
 // ── ENGINE 2: GROQ DIRECT CALL ───────────────────────────────────────────────
 async function callViaGroqDirect(msgs, max, useVision){
+  if(!GROQ_KEY) throw new Error("Groq key not configured — set VITE_GROQ_KEY in Netlify env vars");
   const model = useVision ? GROQ_VISION_MODEL : GROQ_TEXT_MODEL;
   const r = await fetch("https://api.groq.com/openai/v1/chat/completions",{
     method:"POST",
@@ -656,7 +713,7 @@ function crossCheckResults(a, b, engineA, engineB){
 async function callGroq(msgs, max=4000, useVision=false){
   const isBlueprintScan = useVision || msgs.some(m=>
     Array.isArray(m.content) && m.content.some(p=>
-      p.type==="image_url"||p.type==="inline_data"
+      p.type==="image_url"||p.type==="inline_data"||p.type==="document"
     )
   );
   const region       = window._currentRegion||"NG";
@@ -1036,7 +1093,8 @@ function AIChat({estimateCtx,onApplySuggestion,onQuerySaved,seedMsg}){
         {busy&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",background:`${GN}0.06)`,border:`1px solid ${GN}0.12)`,borderRadius:12,width:"fit-content",color:`${GN}0.6)`,fontSize:10}}>{[0,1,2].map(i=><div key={i} style={{width:5,height:5,borderRadius:"50%",background:"#10b981",animation:`bounce 0.6s infinite ${i*150}ms`}}/>)}<span style={{marginLeft:4}}>Analyzing...</span></div>}
         <div ref={endRef}/>
       </div>
-      <div style={{padding:"10px 12px",borderTop:`1px solid ${GN}0.1)`,display:"flex",gap:8,flexShrink:0}}>
+      <div style={{padding:"10px 12px",borderTop:`1px solid ${GN}0.1)`,display:"flex",gap:8,flexShrink:0,alignItems:"center"}}>
+        <VoiceButton onTranscript={t=>{setInp(t);send(t);}}/>
         <input value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send(inp);}}} disabled={busy} placeholder="/findRisks · /valueEngineer · ask anything..." style={{flex:1,background:`${GN}0.05)`,border:`1px solid ${GN}0.15)`,borderRadius:12,padding:"8px 12px",color:"#fff",fontSize:11,outline:"none",opacity:busy?0.4:1}}/>
         <button onClick={()=>send(inp)} disabled={busy||!inp.trim()} style={{width:36,height:36,borderRadius:10,border:"none",cursor:inp.trim()&&!busy?"pointer":"not-allowed",background:inp.trim()&&!busy?"linear-gradient(135deg,#10b981,#059669)":"rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,opacity:busy||!inp.trim()?0.3:1}}>
           <Send size={14} style={{color:inp.trim()&&!busy?"#000":"rgba(255,255,255,0.4)"}}/>
@@ -1089,7 +1147,15 @@ function CostsTab({lineItems,baselineItems,onUpdateLineItems,region,taxRate}){
 }
 
 function MultiCurrencyCompare({baseTotalUsd}){
-  const rates=[{code:"USD",flag:"🇺🇸",rate:1,sym:"$"},{code:"NGN",flag:"🇳🇬",rate:1,sym:"₦"},{code:"GBP",flag:"🇬🇧",rate:0.79,sym:"£"},{code:"EUR",flag:"🇪🇺",rate:0.92,sym:"€"},{code:"AUD",flag:"🇦🇺",rate:1.53,sym:"A$"},{code:"INR",flag:"🇮🇳",rate:83,sym:"₹"}];
+  // mat_rate from REGIONS drives NGN; others use live-ish fixed rates
+  const rates=[
+    {code:"USD",flag:"🇺🇸",rate:1,sym:"$"},
+    {code:"NGN",flag:"🇳🇬",rate:REGIONS.NG.mat_rate,sym:"₦"},
+    {code:"GBP",flag:"🇬🇧",rate:0.79,sym:"£"},
+    {code:"EUR",flag:"🇪🇺",rate:0.92,sym:"€"},
+    {code:"AUD",flag:"🇦🇺",rate:1.53,sym:"A$"},
+    {code:"INR",flag:"🇮🇳",rate:83,sym:"₹"},
+  ];
   return(<div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}><Globe size={13} style={{color:"#10b981"}}/><p style={{color:"rgba(255,255,255,0.45)",fontSize:11,fontWeight:700,margin:0}}>Multi-Region Parity</p></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{rates.map(r=><div key={r.code} style={{padding:10,borderRadius:10,border:`1px solid ${GN}0.1)`,background:`${GN}0.04)`}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{color:"rgba(255,255,255,0.25)",fontSize:9,fontWeight:700}}>{r.code}</span><span style={{fontSize:13}}>{r.flag}</span></div><p style={{fontFamily:"JetBrains Mono",fontWeight:700,fontSize:12,color:"rgba(255,255,255,0.7)",margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.sym}{(baseTotalUsd*r.rate).toLocaleString(undefined,{maximumFractionDigits:0})}</p></div>)}</div></div>);}
 
 function CostSensitivitySliders({baseTotal,onMultiplierChange}){
@@ -1128,7 +1194,7 @@ function AdminPanel({onClose,onRefreshLicense}){
     <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16,background:"rgba(0,0,0,0.8)"}} onClick={onClose}>
       <Card style={{width:"100%",maxWidth:500,overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 18px",borderBottom:`1px solid ${GN}0.12)`,background:`${GN}0.04)`}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}><ShieldAlert size={15} style={{color:"#10b981"}}/><p style={{color:"#fff",fontWeight:700,fontSize:12,margin:0}}>Admin and Backup Dashboard</p></div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}><ShieldAlert size={15} style={{color:"#10b981"}}/><p style={{color:"#fff",fontWeight:700,fontSize:12,margin:0}}>Debug & Backup Panel</p></div>
           <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.3)"}}><X size={15}/></button>
         </div>
         <div style={{padding:18,maxHeight:"70vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:12}}>
@@ -1143,6 +1209,8 @@ function AdminPanel({onClose,onRefreshLicense}){
           </div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}><p style={{color:"rgba(255,255,255,0.55)",fontSize:11,fontWeight:700,margin:0}}>License Store</p><button onClick={scan} style={{padding:"4px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:"rgba(255,255,255,0.4)",fontSize:9,cursor:"pointer"}}>Run Scan</button></div>
           {lics.length>0&&<table style={{width:"100%",fontSize:9,borderCollapse:"collapse"}}><thead><tr style={{borderBottom:`1px solid ${GN}0.1)`}}>{["Key","Reference","Status","Activated"].map(h=><th key={h} style={{textAlign:"left",padding:"5px 6px",color:`${GN}0.4)`,fontWeight:700}}>{h}</th>)}</tr></thead><tbody>{lics.map((l,i)=><tr key={i} style={{borderBottom:`1px solid ${GN}0.05)`}}><td style={{padding:"5px 6px",fontFamily:"JetBrains Mono",color:`${GN}0.65)`,maxWidth:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.featureKey}</td><td style={{padding:"5px 6px",fontFamily:"JetBrains Mono",color:"rgba(255,255,255,0.3)",maxWidth:70,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.reference}</td><td style={{padding:"5px 6px"}}><span style={{padding:"2px 6px",borderRadius:99,fontSize:8,fontWeight:900,background:`${GN}0.15)`,color:"#10b981"}}>{l.isUnlocked?"ACTIVE":"OFF"}</span></td><td style={{padding:"5px 6px",fontFamily:"JetBrains Mono",color:"rgba(255,255,255,0.2)",whiteSpace:"nowrap"}}>{l.activatedAt?new Date(l.activatedAt).toLocaleDateString():"-"}</td></tr>)}</tbody></table>}
+          <RestoreLicensePanel onRestored={()=>{onRefreshLicense?.();setStatus("License restored");}}/>
+          <DeviceLinkPanel userSession={null}/>
         </div>
       </Card>
     </div>
@@ -1150,16 +1218,11 @@ function AdminPanel({onClose,onRefreshLicense}){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// USAGE TRACKER PANEL — $250/month = 100 blueprint scans
-// Add-on packs: 30 extra scans for $50
+// USAGE TRACKER PANEL — tracks monthly blueprint scan usage
+// Add-on packs: $30 for 50 extra scans
 // ═══════════════════════════════════════════════════════════════
 // ─── SUBSCRIPTION PLANS ──────────────────────────────────────────
-const PLAN_FILE_LIMITS = {
-  basic:      50  * 1024 * 1024,  // 50MB
-  starter:    150 * 1024 * 1024,  // 150MB
-  pro:        300 * 1024 * 1024,  // 300MB
-  enterprise: 1024 * 1024 * 1024, // 1GB
-};
+// File limits live in PLANS[plan].fileLimitMB — no duplicate PLAN_FILE_LIMITS
 
 const REGIONS = {
   NG:{label:"🇳🇬 Nigeria",currency:"USD",symbol:"$",locale:"en-US",rate:1,unit:"sqft",tax:7.5,taxLabel:"VAT",buildingCode:"NBO 2006",mat_currency:"NGN",mat_symbol:"₦",mat_rate:1650},
@@ -1234,10 +1297,11 @@ const CRYPTO_CONFIG = {
 const PLANS = {
   basic: {
     id:"basic", label:"Basic", badge:"",
-    price:150,   annual:1800,
+    price:150, annual:1800,
+    billing:"$150/mo", annual_billing:"$1,800/yr",
     dailyScans:3, scans:90, annual_scans:1080,
     fileLimitMB:50,
-    addon_price:10, addon_per:"scan",
+    addon_price:30, addon_scans:50, addon_per:"pack",
     seats:1,
     features:[
       "1 Personal Account — 1 user only",
@@ -1251,10 +1315,11 @@ const PLANS = {
   },
   starter: {
     id:"starter", label:"Starter", badge:"",
-    price:400,   annual:4800,
+    price:400, annual:4800,
+    billing:"$400/mo", annual_billing:"$4,800/yr",
     dailyScans:10, scans:300, annual_scans:3600,
     fileLimitMB:150,
-    addon_price:10, addon_per:"scan",
+    addon_price:30, addon_scans:50, addon_per:"pack",
     seats:1,
     features:[
       "1 Personal Account — 1 user only",
@@ -1270,10 +1335,11 @@ const PLANS = {
   },
   pro: {
     id:"pro", label:"Pro", badge:"POPULAR",
-    price:700,   annual:8400,
+    price:700, annual:8400,
+    billing:"$700/mo", annual_billing:"$8,400/yr",
     dailyScans:10, scans:300, annual_scans:3600,
     fileLimitMB:300,
-    addon_price:10, addon_per:"scan",
+    addon_price:30, addon_scans:50, addon_per:"pack",
     seats:1,
     features:[
       "1 Personal Account — 1 user only",
@@ -1291,16 +1357,17 @@ const PLANS = {
   },
   enterprise: {
     id:"enterprise", label:"Enterprise", badge:"POWER",
-    price:2500,  annual:30000,
+    price:2500, annual:30000,
+    billing:"$2,500/mo", annual_billing:"$30,000/yr",
     dailyScans:Infinity, scans:Infinity, annual_scans:Infinity,
     fileLimitMB:1024,
-    addon_price:10, addon_per:"scan",
+    addon_price:30, addon_scans:50, addon_per:"pack",
     seats:1,
     features:[
       "1 Personal Account — 1 user only",
       "Everything in Pro",
       "Unlimited uploads per day · 1GB max file size",
-      "Extra scans: $10 each (no hard cap)",
+      "Add-on pack: $30 for 50 extra scans (no hard cap)",
       "Unlimited project history",
       "White-label PDF reports",
       "Priority WhatsApp support",
@@ -1386,7 +1453,7 @@ function UsageTrackerPanel({ usage, onOpenAddonOptions }) {
 function PlanSelector({email: emailProp, region, paystackKey, paystackReady, onSuccess}) {
   const [selectedPlan, setSelectedPlan]   = useState("starter");
   const [billingCycle, setBillingCycle]   = useState("monthly");
-  const [payMethod, setPayMethod]         = useState("paystack");
+  const [payMethod, setPayMethod]         = useState("flutterwave");
   const [processing, setProcessing]       = useState(false);
   const [resolvedEmail, setResolvedEmail] = useState(emailProp||"");
   const [successData, setSuccessData]     = useState(null);
@@ -1429,6 +1496,7 @@ function PlanSelector({email: emailProp, region, paystackKey, paystackReady, onS
             tier:"FE_"+selectedPlan.toUpperCase(),
             plan:selectedPlan, billing:billingCycle, scans:getScans(),
           });
+          // No trial needed — full license already saved above
           setProcessing(false);
           setSuccessData({reference:response.reference,plan:selectedPlan,email,scans:getScans()});
         },
@@ -1438,24 +1506,13 @@ function PlanSelector({email: emailProp, region, paystackKey, paystackReady, onS
     }catch(err){ setProcessing(false); alert("Payment error: "+err.message); }
   };
 
-  // LEMON SQUEEZY
-  const handleLemonSqueezy = () => {
-    const key = selectedPlan+"_"+(isAnnual?"annual":"monthly");
-    const variantId = LEMON_SQUEEZY_CONFIG.variants[key];
-    if(!variantId||variantId.includes("VARIANT_ID")){
-      alert("Lemon Squeezy not configured yet. Use USDT or Paystack.");
-      return;
-    }
-    openLemonSqueezy(variantId, email, {plan:selectedPlan, billing:billingCycle});
-  };
-
   const TIER_COLORS = { starter:"#10b981", pro:"#818cf8", enterprise:"#f59e0b" };
   const tc = TIER_COLORS[selectedPlan]||"#10b981";
 
   const PAY_METHODS = [
-    {id:"helio",    label:"Helio",    flag:"⚡", note:"USDC/USDT/SOL + Card — Auto-activation, any country"},
-    {id:"paystack", label:"Paystack", flag:"🇳🇬", note:"Cards, Bank Transfer, USSD — Nigeria preferred"},
-    {id:"crypto",   label:"USDT Manual", flag:"₮", note:"Ethereum ERC20 — Manual 1hr activation"},
+    {id:"flutterwave", label:"Flutterwave", flag:"🌍", note:"Card, Bank Transfer, USSD — International, any country, instant activation"},
+    {id:"paystack",    label:"Paystack",    flag:"🇳🇬", note:"Cards, Bank Transfer, USSD — Nigeria preferred"},
+    {id:"crypto",      label:"USDT Manual", flag:"₮",  note:"Ethereum ERC20 — Manual 1hr activation"},
   ];
 
   return(
@@ -1503,7 +1560,7 @@ function PlanSelector({email: emailProp, region, paystackKey, paystackReady, onS
             <p style={{color:"rgba(255,255,255,0.2)",fontSize:8,margin:"3px 0 0"}}>{isAnnual?plan.annual_billing:plan.billing}</p>
           </div>
           <div style={{textAlign:"center",padding:"8px 12px",borderRadius:10,background:`${tc}12`,border:`1px solid ${tc}25`}}>
-            <p style={{fontFamily:"Bebas Neue",fontSize:"1.4rem",color:tc,margin:0,lineHeight:1}}>{getScans().toLocaleString()}</p>
+            <p style={{fontFamily:"Bebas Neue",fontSize:"1.4rem",color:tc,margin:0,lineHeight:1}}>{getScans()===Infinity?"Unlimited":getScans().toLocaleString()}</p>
             <p style={{color:`${tc}80`,fontSize:7,margin:"2px 0 0",textTransform:"uppercase",letterSpacing:"0.1em"}}>scans</p>
           </div>
         </div>
@@ -1520,7 +1577,7 @@ function PlanSelector({email: emailProp, region, paystackKey, paystackReady, onS
 
         <div style={{padding:"6px 10px",borderRadius:8,background:"rgba(16,185,129,0.05)",border:"1px solid rgba(16,185,129,0.1)",marginBottom:10}}>
           <p style={{color:"#10b981",fontSize:9,fontWeight:700,margin:0}}>⚡ 24-Hour Full-Feature Trial After Payment</p>
-          <p style={{color:"rgba(255,255,255,0.2)",fontSize:8,margin:"2px 0 0"}}>Add-on: ${plan.addon_price} for {plan.addon_scans} extra scans · {plan.seats} seat{plan.seats>1?"s":""} included</p>
+          <p style={{color:"rgba(255,255,255,0.2)",fontSize:8,margin:"2px 0 0"}}>Add-on pack: ${ADDON_PRICE_USD} for {ADDON_SCANS} extra scans · {plan.seats} seat{plan.seats>1?"s":""} included</p>
         </div>
 
         {/* Payment method */}
@@ -1548,15 +1605,15 @@ function PlanSelector({email: emailProp, region, paystackKey, paystackReady, onS
           </div>
         ):(
           <button
-            onClick={payMethod==="helio"
-          ? ()=>openHelioCheckout(selectedPlan,billingCycle,email,onSuccess)
+            onClick={payMethod==="flutterwave"
+          ? ()=>{ const amt=isAnnual?plan.annual:plan.price; openFlutterwaveCheckout(selectedPlan,billingCycle,email,amt,onSuccess); }
           : payMethod==="paystack"
           ? handlePaystack
           : ()=>setShowCryptoFlow(true)}
             style={{width:"100%",padding:"13px 0",borderRadius:11,border:"none",cursor:"pointer",
               fontWeight:900,fontSize:13,background:`linear-gradient(135deg,${tc},${tc}cc)`,
               color:selectedPlan==="pro"?"#fff":"#000",boxShadow:`0 4px 20px ${tc}44`}}>
-            Pay {priceStr()} via {payMethod==="helio"?"Helio (Auto)":payMethod==="paystack"?"Paystack":"USDT Manual"}
+            Pay {priceStr()} via {payMethod==="flutterwave"?"Flutterwave (Auto)":payMethod==="paystack"?"Paystack":"USDT Manual"}
           </button>
         )}
         <p style={{color:"rgba(255,255,255,0.12)",fontSize:8,textAlign:"center",marginTop:6}}>
@@ -1591,7 +1648,7 @@ function SubscriptionGate({userSession,onPaid,onLogout,paystackKey}){
   const FEATURES=[
     "6 Trade Modes (Electrical, Plumbing, Roofing, HVAC, Civil, General)",
     "AI Blueprint Analysis — upload any PDF or image",
-    "600 blueprint scans per month",
+    "Unlimited blueprint scans per month",
     "Trade-specific quantity takeoffs",
     "Waste factor + Tax/VAT engine",
     "Editable cost matrix with real-time totals",
@@ -1606,12 +1663,14 @@ function SubscriptionGate({userSession,onPaid,onLogout,paystackKey}){
   const handlePay=()=>{
     if(!paystackReady||!window.PaystackPop){alert("Payment gateway loading. Try again in 5 seconds.");return;}
     const email=userSession?.email;if(!email)return;
-    const amount=r.kobo; // $250/month in local currency kobo/cents // ₦412,500 or $250 in kobo/cents
+    // Amount in kobo (NGN×100) or cents (USD×100) — always reads from PLANS.enterprise.price
+    const baseUSD = PLANS.enterprise.price;
+    const amount = region==="NG" ? Math.round(baseUSD * 1650 * 100) : baseUSD * 100;
     setProcessing(true);
     window.PaystackPop.setup({
       key:paystackKey,
       email,amount,currency:region==="NG"?"NGN":"USD",
-      metadata:{tier:"ENTERPRISE_MONTHLY",plan:"$250/month — 600 blueprint scans"},
+      metadata:{tier:"ENTERPRISE_MONTHLY",plan:`$${PLANS.enterprise.price}/month — Unlimited blueprint scans`},
       callback:async response=>{
         await saveLicense("ENTERPRISE_MONTHLY",{reference:response.reference,customerEmail:email,tier:"ENTERPRISE_MONTHLY"});
         setProcessing(false);
@@ -1674,13 +1733,13 @@ function SubscriptionGate({userSession,onPaid,onLogout,paystackKey}){
         <div style={{padding:16,borderRadius:14,background:"rgba(13,31,22,0.95)",border:"1px solid rgba(16,185,129,0.2)",marginBottom:14}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
             <div>
-              <p style={{color:"rgba(255,255,255,0.5)",fontSize:11,margin:0}}>Enterprise Monthly Plan</p>
-              <p style={{fontFamily:"Bebas Neue",fontSize:"2.2rem",color:"#10b981",margin:0,lineHeight:1,letterSpacing:"0.05em"}}>{r.price}</p>
-              <p style={{color:"rgba(255,255,255,0.25)",fontSize:9,margin:"2px 0 0"}}>600 blueprint scans · All features · Cancel anytime</p>
+              <p style={{color:"rgba(255,255,255,0.5)",fontSize:11,margin:0}}>Choose Your Plan</p>
+              <p style={{fontFamily:"Bebas Neue",fontSize:"2.2rem",color:"#10b981",margin:0,lineHeight:1,letterSpacing:"0.05em"}}>from {fmt(PLANS.basic.price)}/mo</p>
+              <p style={{color:"rgba(255,255,255,0.25)",fontSize:9,margin:"2px 0 0"}}>All plans · Full access · Cancel anytime</p>
             </div>
             <div style={{textAlign:"center",padding:"10px 14px",borderRadius:10,background:"rgba(16,185,129,0.08)",border:"1px solid rgba(16,185,129,0.15)"}}>
-              <p style={{fontFamily:"Bebas Neue",fontSize:"1.8rem",color:"#10b981",margin:0,lineHeight:1}}>600</p>
-              <p style={{color:"rgba(16,185,129,0.5)",fontSize:8,margin:"2px 0 0",textTransform:"uppercase",letterSpacing:"0.1em"}}>Scans/month</p>
+              <p style={{fontFamily:"Bebas Neue",fontSize:"1.5rem",color:"#10b981",margin:0,lineHeight:1}}>∞</p>
+              <p style={{color:"rgba(16,185,129,0.5)",fontSize:8,margin:"2px 0 0",textTransform:"uppercase",letterSpacing:"0.1em"}}>Scans</p>
             </div>
           </div>
           {/* Features list */}
@@ -1707,9 +1766,11 @@ function SubscriptionGate({userSession,onPaid,onLogout,paystackKey}){
         </div>
 
         {/* Already have license? check button */}
-        <button onClick={()=>checkSubscriptionValidity("ENTERPRISE_MONTHLY").then(i=>{if(i.isValid)onPaid();else alert("No active license found. Please complete payment to continue.");})} style={{width:"100%",padding:"10px 0",borderRadius:10,border:"1px solid rgba(16,185,129,0.15)",background:"transparent",color:"rgba(16,185,129,0.5)",cursor:"pointer",fontSize:10,fontWeight:600}}>
+        <button onClick={()=>checkSubscriptionValidity("ENTERPRISE_MONTHLY").then(i=>{if(i.isValid)onPaid();else alert("No active license found. Please complete payment to continue.");})} style={{width:"100%",padding:"10px 0",borderRadius:10,border:"1px solid rgba(16,185,129,0.15)",background:"transparent",color:"rgba(16,185,129,0.5)",cursor:"pointer",fontSize:10,fontWeight:600,marginBottom:8}}>
           Already paid? Verify my license
         </button>
+        {/* Restore license from another device — accessible before workspace so locked-out users can recover */}
+        <RestoreLicensePanel onRestored={()=>{ checkSubscriptionValidity("ENTERPRISE_MONTHLY").then(i=>{ if(i.isValid) onPaid(); }); }}/>
       </div>
     </div>
   );
@@ -1872,7 +1933,7 @@ function AuthScreen({onAuth}){
 }
 
 
-// ── SEARCHABLE REGION SELECTOR — 108 countries ──────────────────────────────
+// ── SEARCHABLE REGION SELECTOR — 46 countries ───────────────────────────────
 function RegionSelector({region, onSelect}){
   const [search, setSearch] = useState("");
   const [open,   setOpen]   = useState(false);
@@ -1914,7 +1975,7 @@ function RegionSelector({region, onSelect}){
               autoFocus
               value={search}
               onChange={e=>setSearch(e.target.value)}
-              placeholder="Search 108 countries..."
+              placeholder={`Search ${Object.keys(REGIONS).length} countries...`}
               style={{width:"100%",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(16,185,129,0.2)",borderRadius:8,padding:"7px 10px",color:"#fff",fontSize:11,outline:"none",boxSizing:"border-box"}}
             />
           </div>
@@ -2103,23 +2164,17 @@ function UploadScreen({onFile,region,setRegion,customPrices,setCustomPrices,trad
   const [bannerDismissed,setBannerDismissed]=useState(false);
   const [bannerOpen,setBannerOpen]=useState(false);
   const [licenseInfo,setLicenseInfo]=useState({isValid:false,daysRemaining:0});
+  const paystackReadyBanner=usePaystack();
   const isProUser=licenseInfo.isValid===true;
   useEffect(()=>{ checkSubscriptionValidity("ENTERPRISE_MONTHLY").then(setLicenseInfo); },[]);
   const handleBannerPay=()=>{
-    if(!paystackReady||!window.PaystackPop){alert("Payment gateway loading. Try again in 5 seconds.");return;}
     const email=userSession?.email;if(!email)return;
-    const r=REGIONS[region]||REGIONS.NG;
-    const amount=r.kobo; // $250/month in local currency kobo/cents
-    window.PaystackPop.setup({
-      key:paystackKey||"pk_test_YOUR_KEY_HERE",email,amount,currency:region==="NG"?"NGN":"USD",
-      metadata:{tier:"ENTERPRISE_MONTHLY"},
-      callback:async response=>{
-        await saveLicense("ENTERPRISE_MONTHLY",{reference:response.reference,customerEmail:email,tier:"ENTERPRISE_MONTHLY"});
-        checkSubscriptionValidity("ENTERPRISE_MONTHLY").then(setLicenseInfo);
-        alert("Payment successful! Enterprise activated.");
-      },
-      onClose:()=>{}
-    }).openIframe();
+    // Use Flutterwave for the banner upgrade flow
+    openFlutterwaveCheckout("enterprise","monthly",email,PLANS.enterprise.price,async()=>{
+      await checkSubscriptionValidity("ENTERPRISE_MONTHLY").then(setLicenseInfo);
+      setBannerOpen(false);
+      onPaid?.();
+    });
   };
   const handleFile=async file=>{setErr("");const _plan=(userSession?.plan||"starter").toLowerCase();
 const v=validateFile(file,_plan);if(!v.valid){setErr(v.error);return;}setPendingFile(file);setPct(0);setLoaded(0);setTotalSz(file.size);if(file.type.startsWith("image/"))setPreview(URL.createObjectURL(file));else setPreview(null);const fr=new FileReader();fr.onprogress=e=>{if(e.lengthComputable){setPct(Math.round((e.loaded/e.total)*100));setLoaded(e.loaded);}};fr.onload=()=>setPct(100);fr.onerror=()=>setErr("File read error.");fr.readAsArrayBuffer(file);};
@@ -2151,8 +2206,8 @@ const v=validateFile(file,_plan);if(!v.valid){setErr(v.error);return;}setPending
                   <span style={{color:"#000",fontFamily:"Bebas Neue",fontWeight:900,fontSize:14}}>FE</span>
                 </div>
                 <div style={{minWidth:0}}>
-                  <p style={{color:"#fff",fontWeight:700,fontSize:12,margin:0,lineHeight:1.2}}>Unlock Enterprise — <span style={{color:"#10b981"}}>{REGIONS[region]?.price||"$250/mo"}</span></p>
-                  <p style={{color:"rgba(16,185,129,0.6)",fontSize:9,margin:"2px 0 0"}}>600 scans · All trades · RFQ · Compare · Export · AI Copilot</p>
+                  <p style={{color:"#fff",fontWeight:700,fontSize:12,margin:0,lineHeight:1.2}}>Unlock Enterprise — <span style={{color:"#10b981"}}>{fmt(PLANS.enterprise.price)}/mo</span></p>
+                  <p style={{color:"rgba(16,185,129,0.6)",fontSize:9,margin:"2px 0 0"}}>Unlimited scans · All trades · RFQ · Compare · Export · AI Copilot</p>
                 </div>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
@@ -2167,8 +2222,29 @@ const v=validateFile(file,_plan);if(!v.valid){setErr(v.error);return;}setPending
             <div style={{width:32,height:32,borderRadius:9,background:"linear-gradient(135deg,#10b981,#059669)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <span style={{color:"#000",fontFamily:"Bebas Neue",fontWeight:900,fontSize:12}}>FE</span>
             </div>
-            <div><p style={{color:"#10b981",fontWeight:700,fontSize:11,margin:0}}>Enterprise Active</p><p style={{color:"rgba(16,185,129,0.5)",fontSize:9,margin:0}}>{licenseInfo.daysRemaining} days remaining · 600 scans/month</p></div>
+            <div><p style={{color:"#10b981",fontWeight:700,fontSize:11,margin:0}}>Enterprise Active</p><p style={{color:"rgba(16,185,129,0.5)",fontSize:9,margin:0}}>{licenseInfo.daysRemaining} days remaining · Unlimited scans</p></div>
             <CheckCircle2 size={18} style={{color:"#10b981",marginLeft:"auto"}}/>
+          </div>
+        )}
+        {/* Subscribe modal — triggered by banner Subscribe button */}
+        {bannerOpen&&(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>{if(e.target===e.currentTarget)setBannerOpen(false);}}>
+            <div style={{background:"#0a1a10",border:"1px solid rgba(16,185,129,0.3)",borderRadius:16,padding:20,maxWidth:420,width:"100%",maxHeight:"90vh",overflowY:"auto",position:"relative"}}>
+              <button onClick={()=>setBannerOpen(false)} style={{position:"absolute",top:12,right:12,background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.4)"}}><X size={18}/></button>
+              <p style={{color:"rgba(16,185,129,0.6)",fontSize:10,textTransform:"uppercase",letterSpacing:"0.2em",margin:"0 0 6px"}}>Upgrade to Enterprise</p>
+              <p style={{fontFamily:"Bebas Neue",fontSize:"1.6rem",color:"#fff",margin:"0 0 12px",letterSpacing:"0.05em"}}>{fmt(PLANS.enterprise.price)}/month — Unlimited Scans</p>
+              <PlanSelector
+                email={userSession?.email}
+                region={region}
+                paystackKey={paystackKey}
+                paystackReady={paystackReadyBanner}
+                onSuccess={async ()=>{
+                  await checkSubscriptionValidity("ENTERPRISE_MONTHLY").then(setLicenseInfo);
+                  setBannerOpen(false);
+                  onPaid?.();
+                }}
+              />
+            </div>
           </div>
         )}
 
@@ -2182,7 +2258,7 @@ const v=validateFile(file,_plan);if(!v.valid){setErr(v.error);return;}setPending
         {section==="settings"&&<WasteTaxPanel wasteFactor={wasteFactor} setWasteFactor={setWasteFactor} taxRate={taxRate} setTaxRate={setTaxRate} region={region}/>}
         {section==="region"&&<Card style={{padding:14}}>
           <p style={{color:`${GN}0.5)`,fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.2em",margin:"0 0 10px"}}>Project Region and Currency</p>
-          {/* Searchable country selector — 108 countries */}
+          {/* Searchable country selector — 46 countries */}
           <RegionSelector region={region} onSelect={setRegion}/>
         </Card>}
         {/* Drop zone */}
@@ -2599,11 +2675,11 @@ function WorkspaceShell({initialData,region,setRegion,tradeMode,wasteFactor,taxR
     // ── $250/month = ₦412,500 at 1650 rate (or use USD directly)
     const r=REGIONS[region]||REGIONS.NG;
     // For NGN regions: ₦412,500 (kobo: 41250000) | For USD: $250 (kobo: 25000)
-    const amount = region==="NG" ? 41250000 : 25000; // kobo/cents for $250
+    const amount = region==="NG" ? Math.round(PLANS.enterprise.price*1650*100) : PLANS.enterprise.price*100;
     window.PaystackPop.setup({
-      key:paystackKey||"pk_test_210007597620028bce50fc67189e6282f9d74e87",
+      key:paystackKey,
       email,amount,currency:region==="NG"?"NGN":"USD",
-      metadata:{tier:"ENTERPRISE_MONTHLY",plan:"$250/month - 100 blueprint scans"},
+      metadata:{tier:"ENTERPRISE_MONTHLY",plan:`$${PLANS.enterprise.price}/month — Unlimited blueprint scans`},
       callback:async response=>{
         await saveLicense("ENTERPRISE_MONTHLY",{reference:response.reference,customerEmail:email,tier:"ENTERPRISE_MONTHLY"});
         checkSubscriptionValidity("ENTERPRISE_MONTHLY").then(setLicenseInfo);
@@ -2617,10 +2693,10 @@ function WorkspaceShell({initialData,region,setRegion,tradeMode,wasteFactor,taxR
     const email=userSession?.email||prompt("Enter your email:");if(!email)return;
     if(!paystackReady||!window.PaystackPop){alert("Payment gateway loading. Wait 5 seconds and try again.");return;}
     window.PaystackPop.setup({
-      key:paystackKey||"pk_test_210007597620028bce50fc67189e6282f9d74e87",
-      email,amount:5000, // $50 in cents
+      key:paystackKey,
+      email,amount:ADDON_PRICE_USD*100, // $30 in cents
       currency:"USD",
-      metadata:{type:"ADDON_PACK",scans:ADDON_SCANS,description:`${ADDON_SCANS} extra blueprint scans`},
+      metadata:{type:"ADDON_PACK",scans:ADDON_SCANS,description:`${ADDON_SCANS} extra blueprint scans — $${ADDON_PRICE_USD}`},
       callback:async response=>{
         const updated=await addAddonScans(ADDON_SCANS);setUsage(updated);setShowAddon(false);
         alert(`${ADDON_SCANS} add-on scans added to your account!`);
@@ -2641,6 +2717,12 @@ function WorkspaceShell({initialData,region,setRegion,tradeMode,wasteFactor,taxR
     else if(type==="RISK_MATRIX"&&payload)setLineItems(prev=>[...prev.filter(i=>i.id!=="RISK-CONTINGENCY"),{id:"RISK-CONTINGENCY",description:`Risk Contingency (${payload.recommendedContingencyBufferPercent}%)`,category:"Contingency",qty:1,unit:"LS",materialCost:payload.contingencyCostUsd||0,laborCost:0,_aiGenerated:true}]);
     else if(type==="SCOPE_GAP"&&Array.isArray(payload))setLineItems(prev=>[...prev,...payload.map(g=>({id:`SCOPE-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,description:g.inferredLineItem,category:g.missingCategory||"General",qty:g.calculatedQtyRequired,unit:g.unit,materialCost:g.calculatedQtyRequired>0?g.estimatedImpactUsd/g.calculatedQtyRequired:0,laborCost:0,_aiGenerated:true}))]);
     else if(type==="FX_REALIGNMENT"&&payload){const match=Object.entries(REGIONS).find(([,v])=>payload.targetRegion&&payload.targetRegion.toLowerCase().includes(v.label.split(" ")[1]?.toLowerCase()||""));if(match)setRegion(match[0]);}
+    else if(type==="RFQ_EMAIL"&&payload){
+      // Open email client with the RFQ pre-filled, or copy to clipboard
+      const rfqBody=`${payload.subject||"RFQ"}\n\n${payload.body||""}`;
+      if(navigator.clipboard){navigator.clipboard.writeText(rfqBody).then(()=>alert("RFQ email copied to clipboard!\n\nSubject: "+payload.subject)).catch(()=>{});}
+      else{const ta=document.createElement("textarea");ta.value=rfqBody;document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);alert("RFQ email copied to clipboard!");}
+    }
     onQuerySaved?.();
   },[setRegion,onQuerySaved]);
 
@@ -2651,8 +2733,12 @@ function WorkspaceShell({initialData,region,setRegion,tradeMode,wasteFactor,taxR
     {id:"trade",label:"Trade Items",Icon:TradeIcon},
     {id:"costs",label:"Cost Matrix",Icon:Landmark},
     {id:"risks",label:"Risks",Icon:AlertTriangle},
+    {id:"carbon",label:"Carbon",Icon:AlertTriangle},
+    {id:"tools",label:"Tools",Icon:Wrench},
+    {id:"market",label:"Market",Icon:ShoppingCart},
     {id:"rfq",label:"RFQ / PO",Icon:ShoppingCart},
     {id:"compare",label:"V1 vs V2",Icon:ArrowLeftRight},
+    {id:"share",label:"Share",Icon:Download},
     {id:"export",label:"Export",Icon:Download},
     {id:"copilot",label:"AI Copilot",Icon:CheckCircle2},
     {id:"history",label:"History",Icon:Database},
@@ -2691,10 +2777,17 @@ function WorkspaceShell({initialData,region,setRegion,tradeMode,wasteFactor,taxR
         <div style={{display:"flex",alignItems:"center",gap:6}}>
           {isDataModified&&<button onClick={handleResetToBaseline} style={{display:"flex",alignItems:"center",gap:3,padding:"4px 8px",borderRadius:7,border:`1px solid ${GN}0.2)`,background:`${GN}0.08)`,color:"#10b981",fontSize:9,fontWeight:700,cursor:"pointer"}}><RotateCcw size={9}/>Reset</button>}
           <button onClick={async()=>{
-  const qrData = await generateVerificationQR(initialData,region,tradeMode,fileName);
+  let qrData = null;
+  try{
+    qrData = await generateVerificationQR(initialData,region,tradeMode,fileName);
+  }catch{}
+  if(!qrData){
+    // QR generation failed — notify but still generate PDF without stamp
+    console.warn("QR verification stamp unavailable — PDF will be generated without it.");
+  }
   generatePDFReport(initialData,region,tradeMode,fileName,qrData);
 }} style={{display:"flex",alignItems:"center",gap:3,padding:"4px 8px",borderRadius:7,border:"1px solid rgba(59,130,246,0.35)",background:"rgba(59,130,246,0.12)",color:"#60a5fa",fontSize:9,fontWeight:700,cursor:"pointer"}}><Download size={9}/>PDF Report</button>
-          {!isProUser&&<button onClick={handleUnlock} style={{display:"flex",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:7,border:"1px solid rgba(245,158,11,0.35)",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontSize:9,fontWeight:900,cursor:"pointer"}}><CreditCard size={10}/>$250/mo Enterprise</button>}
+          {!isProUser&&<button onClick={handleUnlock} style={{display:"flex",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:7,border:"1px solid rgba(245,158,11,0.35)",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontSize:9,fontWeight:900,cursor:"pointer"}}><CreditCard size={10}/>{fmt(PLANS.enterprise.price)}/mo Enterprise</button>}
           {isProUser&&<div style={{display:"flex",alignItems:"center",gap:4,padding:"4px 8px",borderRadius:7,border:`1px solid ${GN}0.15)`,background:`${GN}0.05)`}}><CalendarClock size={10} style={{color:`${GN}0.6)`}}/><span style={{color:"#10b981",fontSize:9,fontWeight:700,fontFamily:"JetBrains Mono"}}>{licenseInfo.daysRemaining}d left</span></div>}
           <button onClick={()=>setAdminOpen(true)} style={{padding:6,borderRadius:7,border:`1px solid ${GN}0.15)`,background:`${GN}0.05)`,cursor:"pointer",color:`${GN}0.5)`,display:"flex"}}><Wrench size={12}/></button>
           <button onClick={onReset} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.18)",fontSize:8}}>Reset</button>
@@ -2754,6 +2847,26 @@ function WorkspaceShell({initialData,region,setRegion,tradeMode,wasteFactor,taxR
             </FeaturePaywallGate>}
             {activeTab==="copilot"&&<FeaturePaywallGate isProUser={isProUser} label="AI Copilot" onUnlock={handleUnlock}><div style={{height:460}}><AIChat estimateCtx={estimateCtx} onApplySuggestion={applyAISuggestion} onQuerySaved={onQuerySaved} seedMsg={copilotSeed}/></div></FeaturePaywallGate>}
             {activeTab==="history"&&<HistoryPanel userSession={userSession} dbRefresh={dbRefresh+dbTick}/>}
+            {activeTab==="carbon"&&<FeaturePaywallGate isProUser={isProUser} label="Carbon Score Card" onUnlock={handleUnlock}>
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                <CarbonScoreCard lineItems={lineItems} totalArea={meta.total_area||0}/>
+                <BidHealthScore costPerUnit={meta.cost_per_unit||0} tradeMode={tradeMode} region={region}/>
+                <PredictiveOverrunWarning data={initialData} tradeMode={tradeMode} region={region}/>
+              </div>
+            </FeaturePaywallGate>}
+            {activeTab==="tools"&&<FeaturePaywallGate isProUser={isProUser} label="Tools — Structural Calculator + Scale Correction + Assembly Library" onUnlock={handleUnlock}>
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                <AssemblyLibrary tradeMode={tradeMode} onAddAssembly={items=>setLineItems(prev=>[...prev,...items.map(it=>({...it,id:"ASM-"+Date.now()+"-"+Math.random().toString(36).slice(2,5),_aiGenerated:true}))])} region={region}/>
+                <ToolsPanel lineItems={lineItems} onUpdateLineItems={setLineItems} totalArea={meta.total_area||0} region={region}/>
+                <MaterialShortageAlert lineItems={lineItems}/>
+              </div>
+            </FeaturePaywallGate>}
+            {activeTab==="market"&&<FeaturePaywallGate isProUser={isProUser} label="Live Market Prices" onUnlock={handleUnlock}>
+              <CommodityTicker region={region}/>
+            </FeaturePaywallGate>}
+            {activeTab==="share"&&<FeaturePaywallGate isProUser={isProUser} label="Client Share Link + E-Signature" onUnlock={handleUnlock}>
+              <ShareLinkGenerator estimateData={initialData} region={region} tradeMode={tradeMode} fileName={fileName}/>
+            </FeaturePaywallGate>}
           </Card>
         </main>
         {/* Right copilot rail */}
@@ -2768,7 +2881,7 @@ function WorkspaceShell({initialData,region,setRegion,tradeMode,wasteFactor,taxR
               <Pill c="emerald">LIVE</Pill>
             </div>
             <div style={{flex:1,overflow:"hidden",margin:6,borderRadius:10,border:`1px solid ${GN}0.1)`,background:"rgba(10,26,18,0.4)"}}>
-              {isProUser?<AIChat estimateCtx={estimateCtx} onApplySuggestion={applyAISuggestion} onQuerySaved={onQuerySaved} seedMsg={copilotSeed}/>:<div style={{height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:16}}><Lock size={22} style={{color:`${GN}0.15)`,marginBottom:8}}/><p style={{color:"rgba(255,255,255,0.22)",fontSize:11,fontWeight:700,margin:"0 0 4px"}}>AI Copilot</p><p style={{color:"rgba(255,255,255,0.12)",fontSize:9,margin:"0 0 12px"}}>Enterprise only ($250/month)</p><button onClick={handleUnlock} style={{padding:"8px 16px",borderRadius:10,border:"none",cursor:"pointer",fontWeight:900,fontSize:10,background:"linear-gradient(135deg,#10b981,#059669)",color:"#000"}}>Unlock Now</button></div>}
+              {isProUser?<AIChat estimateCtx={estimateCtx} onApplySuggestion={applyAISuggestion} onQuerySaved={onQuerySaved} seedMsg={copilotSeed}/>:<div style={{height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:16}}><Lock size={22} style={{color:`${GN}0.15)`,marginBottom:8}}/><p style={{color:"rgba(255,255,255,0.22)",fontSize:11,fontWeight:700,margin:"0 0 4px"}}>AI Copilot</p><p style={{color:"rgba(255,255,255,0.12)",fontSize:9,margin:"0 0 12px"}}>Enterprise only ({fmt(PLANS.enterprise.price)}/month)</p><button onClick={handleUnlock} style={{padding:"8px 16px",borderRadius:10,border:"none",cursor:"pointer",fontWeight:900,fontSize:10,background:"linear-gradient(135deg,#10b981,#059669)",color:"#000"}}>Unlock Now</button></div>}
             </div>
           </>}
         </aside>
@@ -2888,28 +3001,7 @@ async function getHistoricalBenchmark(tradeMode){
 
 
 
-async function activateTrial(licenseKey, plan){
-  await dbPut("userLicenses",{
-    featureKey:licenseKey,
-    isUnlocked:true,
-    isTrial:true,
-    reference:"TRIAL_"+Date.now(),
-    activatedAt:new Date().toISOString(),
-    trialExpiresAt:new Date(Date.now()+TRIAL_HOURS*60*60*1000).toISOString(),
-    tier:`TRIAL_${plan.toUpperCase()}`,
-    plan,
-  });
-}
-
-
-async function checkTrialStatus(licenseKey){
-  try{
-    const r = await dbOne("userLicenses",licenseKey);
-    if(!r || !r.isTrial) return {active:false};
-    const msRemaining = new Date(r.trialExpiresAt) - Date.now();
-    return { active: msRemaining > 0, hoursRemaining: Math.max(0,Math.ceil(msRemaining/3600000)), plan:r.plan };
-  }catch{ return {active:false}; }
-}
+// activateTrial / checkTrialStatus removed — no trial flow; users pay directly.
 
 
 
@@ -3116,7 +3208,7 @@ function CarbonScoreCard({lineItems, totalArea}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
         <div style={{textAlign:"center",padding:10,borderRadius:10,background:`${GN}0.04)`}}><p style={{fontFamily:"Bebas Neue",fontSize:18,color:rating.color,margin:0}}>{totalTons.toFixed(1)}</p><p style={{color:"rgba(255,255,255,0.25)",fontSize:8,margin:"2px 0 0"}}>Tonnes CO2e</p></div>
         <div style={{textAlign:"center",padding:10,borderRadius:10,background:`${GN}0.04)`}}><p style={{fontFamily:"Bebas Neue",fontSize:18,color:"#34d399",margin:0}}>{perSqft.toFixed(0)}</p><p style={{color:"rgba(255,255,255,0.25)",fontSize:8,margin:"2px 0 0"}}>kg CO2e/sqft</p></div>
-        <div style={{textAlign:"center",padding:10,borderRadius:10,background:`${GN}0.04)`}}><p style={{fontFamily:"Bebas Neue",fontSize:18,color:"#6ee7b7",margin:0}}>{Math.round(totalKg/411)}</p><p style={{color:"rgba(255,255,255,0.25)",fontSize:8,margin:"2px 0 0"}}>Cars/year equiv.</p></div>
+        <div style={{textAlign:"center",padding:10,borderRadius:10,background:`${GN}0.04)`}}><p style={{fontFamily:"Bebas Neue",fontSize:18,color:"#6ee7b7",margin:0}}>{Math.round(totalKg/4600)}</p><p style={{color:"rgba(255,255,255,0.25)",fontSize:8,margin:"2px 0 0"}}>Cars/year equiv.</p></div>
       </div>
 
       <p style={{color:"rgba(255,255,255,0.3)",fontSize:9,margin:"0 0 10px",lineHeight:1.4}}>{rating.desc}</p>
@@ -3448,7 +3540,7 @@ function LicenseSuccessModal({reference,plan,email,scans,onClose}){
         <div style={{textAlign:"center",marginBottom:16}}>
           <div style={{width:52,height:52,borderRadius:"50%",background:"rgba(16,185,129,0.15)",border:"2px solid #10b981",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px"}}><CheckCircle2 size={24} style={{color:"#10b981"}}/></div>
           <h2 style={{fontFamily:"Bebas Neue",fontSize:"1.5rem",color:"#fff",margin:"0 0 4px",letterSpacing:"0.05em"}}>PAYMENT SUCCESSFUL!</h2>
-          <p style={{color:"rgba(16,185,129,0.6)",fontSize:10,margin:0,textTransform:"uppercase",letterSpacing:"0.12em"}}>{plan} Plan — {(scans||600).toLocaleString()} scans</p>
+          <p style={{color:"rgba(16,185,129,0.6)",fontSize:10,margin:0,textTransform:"uppercase",letterSpacing:"0.12em"}}>{plan} Plan — {!scans||scans===Infinity?"Unlimited":(scans).toLocaleString()} scans</p>
         </div>
         <div style={{padding:14,borderRadius:12,background:"rgba(16,185,129,0.08)",border:"2px solid rgba(16,185,129,0.3)",marginBottom:12,textAlign:"center"}}>
           <p style={{color:"rgba(16,185,129,0.5)",fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.15em",margin:"0 0 6px"}}>🔑 Your License Key — Save This!</p>
@@ -3509,7 +3601,7 @@ function CryptoPaymentFlow({plan,email,onClose,onPending}){
   const [txErr,setTxErr]=useState("");
   const [copied,setCopied]=useState(false);
   const [busy,setBusy]=useState(false);
-  const price=PLANS[plan]?.price||250;
+  const price=PLANS[plan]?.price||PLANS.enterprise.price;
   const wallet=CRYPTO_CONFIG.wallet_address;
   const configured=wallet&&!wallet.includes("YOUR_ETHEREUM");
 
@@ -3701,7 +3793,7 @@ class ErrorBoundary extends React.Component{
               style={{padding:"12px 28px",borderRadius:10,border:"none",cursor:"pointer",fontWeight:900,fontSize:13,background:"linear-gradient(135deg,#10b981,#059669)",color:"#000"}}>
               Reload App
             </button>
-            <p style={{color:"rgba(255,255,255,0.2)",fontSize:10,marginTop:12}}>If this keeps happening, contact support via WhatsApp</p>
+            <a href={CRYPTO_CONFIG.contact} target="_blank" rel="noopener noreferrer" style={{color:"rgba(16,185,129,0.5)",fontSize:10,marginTop:12,display:"block",textDecoration:"none"}}>Contact support via WhatsApp →</a>
           </div>
         </div>
       );
@@ -3710,10 +3802,12 @@ class ErrorBoundary extends React.Component{
   }
 }
 
-export default function App(){
-  // ── INSERT YOUR PAYSTACK PUBLIC KEY HERE ─────────────────────
-  const PAYSTACK_PUBLIC_KEY = "pk_test_210007597620028bce50fc67189e6282f9d74e87";
+function AppInner(){
+  // ── PAYSTACK KEY — set VITE_PAYSTACK_KEY in Netlify env vars ─────────────
+  // No fallback: if env var is missing, payment will fail visibly (not silently use a stale key)
+  const PAYSTACK_PUBLIC_KEY = import.meta.env.VITE_PAYSTACK_KEY || "";
 
+  // All hooks MUST come before any conditional return — Rules of Hooks
   const [screen,setScreen]     = useState("auth");
   const [userSession,setUserSession] = useState(null);
   const [region,setRegion]     = useState("NG");
@@ -3744,14 +3838,28 @@ export default function App(){
     return ()=>clearTimeout(t);
   },[]);
 
-  const handleAuth  = useCallback(session=>{ setUserSession(session); setScreen("upload"); 
-    if(session?.accessToken) sessionStorage.setItem("FE_token", session.accessToken);
-    if(session?.plan) sessionStorage.setItem("FE_plan", session.plan||"free");},[]);
+  const handleAuth  = useCallback(async session=>{
+    // Load saved license into session so SubscriptionWarningBanner has subscription_expiry + plan
+    let enriched = {...session};
+    try{
+      const lic = await dbOne("userLicenses","ENTERPRISE_MONTHLY");
+      if(lic?.isUnlocked){
+        enriched.subscription_expiry = lic.subscription_expiry || null;
+        enriched.plan = lic.plan || "enterprise";
+      }
+    }catch{}
+    setUserSession(enriched);
+    setScreen("subscribe");
+    if(enriched?.accessToken) sessionStorage.setItem("FE_token", enriched.accessToken);
+    if(enriched?.plan) sessionStorage.setItem("FE_plan", enriched.plan||"free");
+  },[]);
   const handleLogout= useCallback(()=>{ setUserSession(null);setResult(null);setFilePreview(null);setFileName("");setScreen("auth"); },[]);
 
   const handleFile  = useCallback(async file=>{
     setScreen("loading"); setFileName(file.name);
     if(file.type.startsWith("image/")) setFilePreview(URL.createObjectURL(file));
+    // Hoisted so catch/retry block can access them
+    let b64, mimeType, isImage;
     try{
       // Check usage limit before analyzing
       const usage = await getMonthlyUsage();
@@ -3760,7 +3868,15 @@ export default function App(){
         alert(`You have used all ${totalLimit} blueprint scans this month.\nBuy an add-on pack (+${ADDON_SCANS} scans for $${ADDON_PRICE_USD}) to continue.`);
         setScreen("upload"); return;
       }
-      const {b64,mimeType} = await fileToB64WithProgress(file, pct=>setLoadStep(Math.floor(pct/100*3)));
+      // Duplicate blueprint check — use file size + mimeType hash before we have area
+      // We check BEFORE analysis; store fingerprint AFTER success (see below)
+      const _prevHistory = (() => { try{ return JSON.parse(sessionStorage.getItem("FE_blueprint_history")||"[]"); }catch{return [];} })();
+      const _sizeFingerprint = `${file.size}_${file.name.length}`;
+      if(_prevHistory.includes(_sizeFingerprint)){
+        if(!window.confirm("This blueprint looks similar to one you already analyzed today.\nAnalyze again?")){ setScreen("upload"); return; }
+      }
+      ({ b64, mimeType } = await fileToB64WithProgress(file, pct=>setLoadStep(Math.floor(pct/100*3))));
+      isImage = file.type.startsWith("image/");
       const mBlock = buildMediaBlock(b64, mimeType);
       // ── DAILY SCAN LIMIT CHECK (before AI call) ──────────────────────────────────
 const userPlanKey2  = (userSession?.plan||"starter").toLowerCase();
@@ -3768,8 +3884,8 @@ const scanCheckRes  = await checkDailyScanLimit(userPlanKey2);
 if(!scanCheckRes.allowed){
   const isEnterprise = userPlanKey2==="enterprise";
   if(isEnterprise){
-    // Enterprise: warn and charge $10/scan — let them continue
-    if(!window.confirm(`Enterprise extra scan alert.\n\nYou have used your included scans today.\nThis scan will be billed at $10.\n\nContinue?`)) return;
+    // Enterprise: warn about add-on pack needed — let them continue
+    if(!window.confirm(`Enterprise extra scan alert.\n\nYou have used your included scans today.\nBuy an add-on pack ($${ADDON_PRICE_USD} for ${ADDON_SCANS} scans) in the workspace to top up.\n\nContinue with this scan?`)) return;
   }else{
     alert(`Daily upload limit reached!\n\nYour ${PLANS[userPlanKey2]?.label||"Starter"} plan allows ${scanCheckRes.limit} uploads per day.\nUsed today: ${scanCheckRes.used}/${scanCheckRes.limit}\n\nLimits reset at midnight. Upgrade to Enterprise for unlimited daily uploads.`);
     return;
@@ -3779,7 +3895,6 @@ if(!scanCheckRes.allowed){
 const wasteAvg = Math.round(Object.values(wasteFactor).reduce((a,b)=>a+b,0)/Math.max(1,Object.keys(wasteFactor).length));
       const prompt   = buildTradePrompt(tradeMode||"GENERAL", region, customPrices, wasteAvg, taxRate);
       // Use vision model for images, text model for PDFs
-const isImage = file.type.startsWith("image/");
 const msgs = [{role:"user",content:isImage?[mBlock,{type:"text",text:prompt}]:[mBlock,{type:"text",text:prompt}]}];
 const raw  = await callGroq(msgs, 4000, isImage);
       const _raw1 = raw.replace(/```json/g,"").replace(/```/g,"").trim();
@@ -3791,6 +3906,12 @@ const raw  = await callGroq(msgs, 4000, isImage);
         else throw new Error("AI returned invalid JSON. Try a clearer blueprint image.");
       }
       data.fileName=file.name; data.tradeMode=tradeMode;
+      // Store blueprint fingerprint after successful analysis
+      try{
+        const _bh=JSON.parse(sessionStorage.getItem("FE_blueprint_history")||"[]");
+        const _fp=`${file.size}_${file.name.length}`;
+        if(!_bh.includes(_fp)){_bh.push(_fp);if(_bh.length>20)_bh.shift();sessionStorage.setItem("FE_blueprint_history",JSON.stringify(_bh));}
+      }catch{}
       // Increment usage counter
       await incrementScanUsage();
       const projectId="proj_"+Date.now();
@@ -3802,7 +3923,13 @@ const raw  = await callGroq(msgs, 4000, isImage);
       if(e.message.includes("fetch")||e.message.includes("network")||e.message.includes("500")){
         try{
           await new Promise(r=>setTimeout(r,2000)); // wait 2s
-          const retryRaw = await callGroq([{role:"user",content:buildTradePrompt(tradeMode||"GENERAL",region,customPrices,5,taxRate)}],4000,false);
+          // Retry WITH the blueprint attached (b64/mimeType are in scope)
+          const retryPrompt = buildTradePrompt(tradeMode||"GENERAL",region,customPrices,5,taxRate);
+          const retryMBlock = b64&&mimeType ? buildMediaBlock(b64,mimeType) : null;
+          const retryMsgs = retryMBlock
+            ? [{role:"user",content:[retryMBlock,{type:"text",text:retryPrompt}]}]
+            : [{role:"user",content:retryPrompt}];
+          const retryRaw = await callGroq(retryMsgs,4000,isImage||false);
           const retryClean = retryRaw.replace(/```json/g,"").replace(/```/g,"").trim();
           let retryData;
           try{retryData=JSON.parse(retryClean);}catch{const m=retryClean.match(/\{[\s\S]*\}/);if(m)retryData=JSON.parse(m[0]);else throw e;}
@@ -3823,13 +3950,37 @@ const raw  = await callGroq(msgs, 4000, isImage);
     }
   },[region,customPrices,tradeMode,wasteFactor,taxRate,bumpDB]);
 
+  // Proposal share-link routing — AFTER all hooks so Rules of Hooks is satisfied
+  const proposalHash = window.location.hash||"";
+  if(proposalHash.startsWith("#/proposal/")){
+    const encoded = proposalHash.replace("#/proposal/","");
+    return <ClientProposalView encoded={encoded}/>;
+  }
+
   return(
     <>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes ping{75%,100%{transform:scale(2);opacity:0}} @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}} *{box-sizing:border-box} ::-webkit-scrollbar{width:4px;height:4px} ::-webkit-scrollbar-track{background:rgba(16,185,129,0.03)} ::-webkit-scrollbar-thumb{background:rgba(16,185,129,0.2);border-radius:99px} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
       {(screen==="auth" || !screen) && <AuthScreen onAuth={handleAuth}/>}
+      {screen==="subscribe" && <SubscriptionGate userSession={userSession} onPaid={async()=>{
+        // Re-enrich userSession with license data so banner has correct expiry + plan
+        try{
+          const lic=await dbOne("userLicenses","ENTERPRISE_MONTHLY");
+          if(lic?.isUnlocked) setUserSession(s=>({...s,subscription_expiry:lic.subscription_expiry,plan:lic.plan||"enterprise"}));
+        }catch{}
+        setScreen("upload");
+      }} onLogout={handleLogout} paystackKey={PAYSTACK_PUBLIC_KEY}/>}
+      {(screen==="upload"||screen==="workspace") && userSession && <SubscriptionWarningBanner userSession={userSession} onGoToPricing={()=>setScreen("subscribe")}/>}
       {screen==="upload"  && <UploadScreen onFile={handleFile} region={region} setRegion={setRegion} customPrices={customPrices} setCustomPrices={setCustomPrices} tradeMode={tradeMode} setTradeMode={setTradeMode} wasteFactor={wasteFactor} setWasteFactor={setWasteFactor} taxRate={taxRate} setTaxRate={setTaxRate} userSession={userSession} onLogout={handleLogout} paystackKey={PAYSTACK_PUBLIC_KEY}/>}
       {screen==="loading"   && <LoadingScreen step={loadStep} tradeMode={tradeMode}/>}
       {screen==="workspace" && result && <WorkspaceShell initialData={result} region={region} setRegion={setRegion} tradeMode={tradeMode} wasteFactor={wasteFactor} taxRate={taxRate} onReset={()=>{setResult(null);setFilePreview(null);setFileName("");setScreen("upload");}} dbRefresh={dbRefresh} onQuerySaved={bumpDB} filePreview={filePreview} fileName={fileName} userSession={userSession} paystackKey={PAYSTACK_PUBLIC_KEY}/>}
     </>
+  );
+}
+
+export default function App(){
+  return(
+    <ErrorBoundary>
+      <AppInner/>
+    </ErrorBoundary>
   );
 }
