@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      disable: true,
+      disable: true, // service worker off — it was failing to register; config kept so it can be re-enabled
       registerType: 'autoUpdate',
       manifest: {
         name: 'ForgeEstimate Ultra Pro',
@@ -22,9 +22,9 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/\/api\//, /\.netlify\//]
+        navigateFallbackDenylist: [/\/api\//, /\/.netlify\//]
       }
     })
   ],
-  build: { outDir: 'dist', assetsDir: 'assets', target: 'es2015' }
+  build: { outDir: 'dist', assetsDir: 'assets' }
 })
